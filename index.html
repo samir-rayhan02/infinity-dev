@@ -159,6 +159,42 @@ window.addEventListener("scroll", () => {
     tick();
   }
 }, { passive: true });
+</script><script>
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+["pointerdown", "touchstart", "keydown"].forEach(ev =>
+  window.addEventListener(ev, () => ctx.state === "suspended" && ctx.resume(), { passive: true })
+);
+
+let lastPlay = 0;
+function tick() {
+  const now = performance.now();
+  if (now - lastPlay < 25) return;
+  lastPlay = now;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.value = 700;
+  gain.gain.setValueAtTime(0.08, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.04);
+}
+
+let lastTop = new WeakMap();
+const LINE_HEIGHT = 24;
+
+document.addEventListener("scroll", (e) => {
+  const el = e.target === document ? document.scrollingElement : e.target;
+  const pos = el.scrollTop;
+  const line = Math.floor(pos / LINE_HEIGHT);
+  if (lastTop.get(el) !== line) {
+    lastTop.set(el, line);
+    tick();
+  }
+}, { capture: true, passive: true });
 </script>
 </body>
 </html>
