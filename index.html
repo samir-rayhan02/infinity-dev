@@ -197,92 +197,99 @@ document.addEventListener("scroll", (e) => {
 }, { capture: true, passive: true });
 </script><script>
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
-["pointerdown", "touchstart", "keydown"].forEach(ev =>
-  window.addEventListener(ev, () => ctx.state === "suspended" && ctx.resume(), { passive: true })
+
+// iPhone silent-switch fix + unlock
+const silent = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+silent.loop = true;
+function unlock() {
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+  silent.play().catch(() => {});
+  if (ctx.state !== "running") ctx.resume();
+}
+["touchstart", "touchend", "pointerdown", "click", "keydown"].forEach(ev =>
+  window.addEventListener(ev, unlock, { passive: true })
 );
 
-function beep(freq, dur, type = "square", vol = 0.08, slideTo = null) {
+function beep(freq, dur, type = "square", vol = 0.12, slideTo = null) {
+  if (ctx.state !== "running") return;
   const t = ctx.currentTime;
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, t);
-  if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
-  gain.gain.setValueAtTime(vol, t);
-  gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  osc.start(t);
-  osc.stop(t + dur);
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, t);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + dur);
 }
 
-// alada alada sound
-const sounds = {
-  type:   () => beep(500 + Math.random() * 200, 0.05, "square", 0.06),   // normal typing
-  space:  () => beep(300, 0.06, "triangle", 0.1),                         // space
-  enter:  () => beep(900, 0.12, "sine", 0.12, 400),                       // enter
-  back:   () => beep(250, 0.08, "sawtooth", 0.06, 120),                   // backspace
-  line:   () => beep(1000, 0.07, "sine", 0.1),                            // 1 theke 2 line e jawa
-  scroll: () => beep(700, 0.04, "square", 0.05),                          // scroll
-  click:  () => beep(600, 0.06, "triangle", 0.1, 900)                     // button click
+const S = {
+  type:   () => beep(500 + Math.random() * 200, 0.05, "square", 0.1),
+  space:  () => beep(300, 0.07, "triangle", 0.15),
+  enter:  () => beep(900, 0.12, "sine", 0.18, 400),
+  back:   () => beep(250, 0.08, "sawtooth", 0.1, 120),
+  line:   () => beep(1000, 0.07, "sine", 0.15),
+  scroll: () => beep(700, 0.04, "square", 0.08),
+  tab:    () => beep(450, 0.09, "triangle", 0.15, 800),   // index.html / style.css / Editor / Profile
+  save:   () => { beep(600, 0.08, "sine", 0.18); setTimeout(() => beep(900, 0.12, "sine", 0.18), 90); },
+  field:  () => beep(800, 0.05, "sine", 0.12),             // input box-e focus
+  click:  () => beep(600, 0.06, "triangle", 0.12, 900)
 };
 
-// cursor ekhon kon line-e
-function getLine(el) {
-  if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-    return el.value.slice(0, el.selectionStart).split("\n").length;
-  }
-  const sel = window.getSelection();
-  if (!sel.rangeCount) return 1;
-  const r = sel.getRangeAt(0).cloneRange();
+// typing: sob input/textarea/editor-e
+document.addEventListener("beforeinput", (e) => {
+  const t = e.inputType || "";
+  if (t === "insertLineBreak" || t === "insertParagraph") S.enter();
+  else if (t.startsWith("delete")) S.back();
+  else if (e.data === " ") S.space();
+  else S.type();
+}, true);
+
+// cursor line bodlale
+function isEd(el) {
+  return el && (el.tagName === "TEXTAREA" || el.isContentEditable);
+}
+function curLine(el) {
+  if (el.tagName === "TEXTAREA") return el.value.slice(0, el.selectionStart).split("\n").length;
+  const s = getSelection();
+  if (!s.rangeCount) return 1;
+  const r = s.getRangeAt(0).cloneRange();
   r.selectNodeContents(el);
-  r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  r.setEnd(s.anchorNode, s.anchorOffset);
   return r.toString().split("\n").length;
 }
-
-function isEditor(el) {
-  return el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.isContentEditable);
-}
-
 let lastLine = 1;
-
-// typing sound (phone keyboard-e-o kaj kore)
-document.addEventListener("input", (e) => {
-  const t = e.inputType || "";
-  if (t === "insertLineBreak" || t === "insertParagraph") sounds.enter();
-  else if (t.startsWith("delete")) sounds.back();
-  else if (e.data === " ") sounds.space();
-  else sounds.type();
-  if (isEditor(e.target)) lastLine = getLine(e.target);
-}, true);
-
-// line change sound (tap kore ba arrow diye line bodlale)
-document.addEventListener("selectionchange", () => {
+function checkLine() {
   const el = document.activeElement;
-  if (!isEditor(el)) return;
-  const line = getLine(el);
-  if (line !== lastLine) {
-    lastLine = line;
-    sounds.line();
-  }
-});
+  if (!isEd(el)) return;
+  const l = curLine(el);
+  if (l !== lastLine) { lastLine = l; S.line(); }
+}
+["selectionchange", "keyup", "touchend", "click"].forEach(ev =>
+  document.addEventListener(ev, () => setTimeout(checkLine, 0), true)
+);
 
-// scroll sound (editor + page, sob jagay)
+// scroll: jekono scroll area (editor, line number, page)
 const lastTop = new WeakMap();
-const LINE_HEIGHT = 24;
 document.addEventListener("scroll", (e) => {
   const el = e.target === document ? document.scrollingElement : e.target;
-  const line = Math.floor(el.scrollTop / LINE_HEIGHT);
-  if (lastTop.get(el) !== line) {
-    lastTop.set(el, line);
-    sounds.scroll();
-  }
+  if (!el || el.scrollTop === undefined) return;
+  const lh = parseFloat(getComputedStyle(el).lineHeight) || 21;
+  const line = Math.floor(el.scrollTop / lh);
+  if (lastTop.get(el) !== line) { lastTop.set(el, line); S.scroll(); }
 }, { capture: true, passive: true });
 
-// button click sound
+// tab / button / link click, Save, input box focus
 document.addEventListener("click", (e) => {
-  if (e.target.closest("button")) sounds.click();
+  const b = e.target.closest("button, a, [role=tab], .tab, [data-tab]");
+  if (!b) return;
+  if (/save/i.test(b.textContent)) S.save();
+  else S.tab();
 }, true);
+
+document.addEventListener("focusin", (e) => {
+  if (e.target.matches("input, textarea")) S.field();
+});
 </script>
 </body>
 </html>
